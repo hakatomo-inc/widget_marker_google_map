@@ -23,14 +23,44 @@ class _MarkerGeneratorState extends State<MarkerGenerator> {
   List<GlobalKey> globalKeys = [];
   List<WidgetMarker> lastMarkers = [];
 
+  List<GlobalKey> getGlobalKeys() {
+    return widget.widgetMarkers.map((_) => GlobalKey()).toList();
+  }
+
+  Future<void> _waitForRepaint(GlobalKey key) async {
+    while (true) {
+      final renderObject = key.currentContext?.findRenderObject();
+      if (renderObject is RenderRepaintBoundary &&
+          renderObject.debugNeedsPaint == false) {
+        break;
+      }
+      await Future.delayed(const Duration(milliseconds: 10));
+    }
+  }
+
   Future<Marker> _convertToMarker(GlobalKey key) async {
-    RenderRepaintBoundary boundary =
-        key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+    final keyIndex = globalKeys.indexOf(key);
+    if (keyIndex == -1) {
+      debugPrint('Key not found in globalKeys. Key: $key');
+      throw FlutterError('Key not found in globalKeys list.');
+    }
+
+    await _waitForRepaint(key);
+
+    final renderObject = key.currentContext?.findRenderObject();
+    if (renderObject == null || renderObject is! RenderRepaintBoundary) {
+      throw FlutterError(
+          'RenderRepaintBoundary not found for the provided key.');
+    }
+
+    RenderRepaintBoundary boundary = renderObject;
+
     final image = await boundary.toImage(pixelRatio: 2);
     final byteData =
         await image.toByteData(format: ImageByteFormat.png) ?? ByteData(0);
     final uint8List = byteData.buffer.asUint8List();
-    final widgetMarker = widget.widgetMarkers[globalKeys.indexOf(key)];
+
+    final widgetMarker = widget.widgetMarkers[keyIndex];
     return Marker(
       onTap: widgetMarker.onTap,
       markerId: MarkerId(widgetMarker.markerId),
@@ -50,7 +80,7 @@ class _MarkerGeneratorState extends State<MarkerGenerator> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance?.addPostFrameCallback((_) => onBuildCompleted());
+    WidgetsBinding.instance.addPostFrameCallback((_) => onBuildCompleted());
   }
 
   Future<void> onBuildCompleted() async {
@@ -66,10 +96,8 @@ class _MarkerGeneratorState extends State<MarkerGenerator> {
 
   @override
   Widget build(BuildContext context) {
-    globalKeys = [];
+    globalKeys = getGlobalKeys(); // 常に最新の globalKeys を生成
     return Transform.translate(
-      /// Place markers outside of screens
-      /// To hide them in case the map becomes transparent.
       offset: Offset(
         -MediaQuery.of(context).size.width,
         -MediaQuery.of(context).size.height,
@@ -77,8 +105,7 @@ class _MarkerGeneratorState extends State<MarkerGenerator> {
       child: Stack(
         children: widget.widgetMarkers.map(
           (widgetMarker) {
-            final key = GlobalKey();
-            globalKeys.add(key);
+            final key = globalKeys[widget.widgetMarkers.indexOf(widgetMarker)];
             return RepaintBoundary(
               key: key,
               child: widgetMarker.widget,
